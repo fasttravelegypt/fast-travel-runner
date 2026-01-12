@@ -113,6 +113,43 @@ const background = new Image();
 background.src = "assets/background.png";
 
 /* =====================================================
+   LOADING SYSTEM
+===================================================== */
+let assetsLoaded = 0;
+let totalAssets = 0;
+let assetsReady = false;
+
+function registerAsset(asset) {
+    totalAssets++;
+
+    if (asset instanceof HTMLImageElement) {
+        asset.onload = asset.onerror = asset.onabort = () => {
+            assetsLoaded++;
+            checkAssetsReady();
+        };
+    } else if (asset instanceof HTMLAudioElement) {
+        asset.oncanplaythrough = () => {
+            assetsLoaded++;
+            checkAssetsReady();
+        };
+    }
+}
+
+function checkAssetsReady() {
+    if (assetsLoaded >= totalAssets) {
+        assetsReady = true;
+    }
+}
+registerAsset(background);
+[
+    jumpSound,
+    gameOverSound,
+    collectSound,
+    obstacleScoreSound,
+    bgmSound,
+    runSound
+].forEach(registerAsset);
+/* =====================================================
    COIN TYPES (RARITY CONTROLLED)
 ===================================================== */
 const coinTypes = [
@@ -132,6 +169,7 @@ function getRandomCoinType() {
     }
     return coinTypes[coinTypes.length - 1];
 }
+coinTypes.forEach(c => registerAsset(c.image));
 
 /* =====================================================
    PLAYER ANIMATION ARRAYS
@@ -146,12 +184,16 @@ for (let i = 1; i <= 8; i++) {
     const img = new Image();
     img.src = `assets/run/run_${i}.png`;
     runFrames.push(img);
+registerAsset(img);
+
 }
 
 for (let i = 1; i <= 12; i++) {
     const img = new Image();
     img.src = `assets/jump/jump_${i}.png`;
     jumpFrames.push(img);
+registerAsset(img);
+
 }
 /* =====================================================
    PLAYER
@@ -179,6 +221,8 @@ const obstacleConfigs = [
     { src: "assets/obstacle/obstacle6.png", width: 220, height: 150, yOffset: -250, hitbox: { offsetX:0, offsetY:0, width:220, height:150 }},
 ];
 obstacleConfigs.forEach(o => { o.image = new Image(); o.image.src = o.src; });
+obstacleConfigs.forEach(o => registerAsset(o.image));
+
 
 /* =====================================================
    FLOATING WORDS & SCORES
@@ -209,6 +253,8 @@ let lastObstacleIndex = -1;
    INPUT
 ===================================================== */
 function handleInput() {
+    if (!assetsReady) return;
+
     if (!gameStarted) {
         gameStarted = true;
         bgmSound.play().catch(()=>{});
@@ -226,6 +272,7 @@ function handleInput() {
         runSound.pause();
     }
 }
+
 canvas.addEventListener("touchstart", handleInput);
 document.addEventListener("keydown", e => e.code === "Space" && handleInput());
 
@@ -402,6 +449,18 @@ function update() {
 function draw() {
     ctx.clearRect(0,0,canvas.width,canvas.height);
 
+    if (!assetsReady) {
+        ctx.fillStyle = "#fff";
+        ctx.font = "22px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText("Loading...", canvas.width / 2, canvas.height / 2 - 20);
+
+        const percent = Math.floor((assetsLoaded / totalAssets) * 100);
+        ctx.font = "18px Arial";
+        ctx.fillText(percent + "%", canvas.width / 2, canvas.height / 2 + 10);
+        return;
+    }
+
     if (!gameStarted) {
         ctx.fillStyle="#fff"; ctx.font="26px Arial"; ctx.textAlign="center";
         ctx.fillText("Fast Travel Running Game",canvas.width/2,canvas.height/2);
@@ -465,6 +524,5 @@ function loop() { update(); draw(); requestAnimationFrame(loop); } loop();
 </script>
 </body>
 </html>
-
 
 
