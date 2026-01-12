@@ -42,13 +42,6 @@ window.onerror = function (msg, src, line) {
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
-// MOBILE OPTIMIZATION: devicePixelRatio for sharper visuals
-const DPR = Math.min(window.devicePixelRatio || 1, 2);
-canvas.width = 360 * DPR;
-canvas.height = 640 * DPR;
-canvas.style.width = "360px";
-canvas.style.height = "640px";
-ctx.scale(DPR, DPR);
 
 /* =====================================================
    CONSTANTS
@@ -468,8 +461,20 @@ function draw() {
 /* =====================================================
    LOOP
 ===================================================== */
-function loop() { update(); draw(); requestAnimationFrame(loop); }
-loop();
+let lastTime = 0;
+const TARGET_FPS = 60;
+const FRAME_TIME = 1000 / TARGET_FPS;
+
+function loop(timestamp) {
+    if (timestamp - lastTime >= FRAME_TIME) {
+        lastTime = timestamp;
+        update();
+        draw();
+    }
+    requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
 </script>
 </body>
 </html>
