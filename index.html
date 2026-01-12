@@ -54,6 +54,8 @@ const DEBUG_HITBOX = false;
 
 const MAX_OBSTACLES_ON_SCREEN = 4;
 const MAX_COLLECTABLES_ON_SCREEN = 2;
+const FIXED_FPS = 60;
+const FRAME_TIME = 1000 / FIXED_FPS;
 
 /* =====================================================
    SPEED INCREMENT
@@ -262,6 +264,8 @@ let animationTimer = 0;
 let gameStarted = false;
 let lastObstacleIndex = -1;
 let lastTime = performance.now();
+let lastFrameTime = performance.now();
+let frameAccumulator = 0;
 
 /* =====================================================
    REUSED HITBOX OBJECTS (GC OPTIMIZATION)
@@ -577,7 +581,20 @@ function draw() {
 /* =====================================================
    LOOP
 ===================================================== */
-function loop() { update(); draw(); requestAnimationFrame(loop); } loop();
+function loop(now) {
+    frameAccumulator += now - lastFrameTime;
+    lastFrameTime = now;
+
+    while (frameAccumulator >= FRAME_TIME) {
+        update();
+        frameAccumulator -= FRAME_TIME;
+    }
+
+    draw();
+    requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
 
 </script>
 </body>
