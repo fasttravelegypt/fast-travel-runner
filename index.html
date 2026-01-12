@@ -1,4 +1,3 @@
-make sure to do the updates on this code:
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -15,32 +14,45 @@ body {
     align-items: center;
     height: 100vh;
     touch-action: manipulation;
+    overflow: hidden;
 }
 canvas {
     background: #000;
     border: 2px solid #fff;
+    display: block;
 }
 </style>
 </head>
 
 <body>
-<canvas id="gameCanvas" width="360" height="640"></canvas>
+<canvas id="gameCanvas"></canvas>
 
 <script>
 /* =====================================================
-   GLOBAL ERROR CATCHER
-===================================================== */
-window.onerror = function (msg, src, line) {
-    console.error("GLOBAL ERROR:", msg, "Line:", line);
-    alert("Game error:\n" + msg);
-    return true;
-};
-
-/* =====================================================
-   CANVAS
+   BASE SETTINGS & MOBILE SCALING
 ===================================================== */
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
+
+let BASE_WIDTH = 360;
+let BASE_HEIGHT = 640;
+let DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+function resizeCanvas() {
+    const scale = Math.min(window.innerWidth / BASE_WIDTH, window.innerHeight / BASE_HEIGHT);
+    canvas.width = BASE_WIDTH * DPR;
+    canvas.height = BASE_HEIGHT * DPR;
+    canvas.style.width = BASE_WIDTH * scale + "px";
+    canvas.style.height = BASE_HEIGHT * scale + "px";
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0); // scale drawing to DPR
+}
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
+
+/* =====================================================
+   GLOBAL ERROR CATCHER
+===================================================== */
+window.onerror = (msg, src, line) => { console.error(msg, line); return true; };
 
 /* =====================================================
    CONSTANTS
@@ -49,15 +61,11 @@ const GAME_SPEED = 4;
 const GRAVITY = 0.7;
 const JUMP_FORCE = -18;
 const SECOND_JUMP_FORCE = -14;
-const GROUND_Y = canvas.height - 150;
 const DEBUG_HITBOX = false;
 
 const MAX_OBSTACLES_ON_SCREEN = 4;
 const MAX_COLLECTABLES_ON_SCREEN = 2;
 
-/* =====================================================
-   SPEED INCREMENT
-===================================================== */
 let speedMultiplier = 1;
 const SPEED_INCREMENT = 0.0003;
 const MAX_SPEED_MULTIPLIER = 3;
@@ -71,9 +79,10 @@ const collectSound = new Audio("assets/collect.mp3");
 const obstacleScoreSound = new Audio("assets/score.mp3");
 const bgmSound = new Audio("assets/bgm.mp3");
 const runSound = new Audio("assets/run_sound.mp3");
-
 bgmSound.loop = true; bgmSound.volume = 0.3;
 runSound.loop = true; runSound.volume = 0.5;
+
+function playSound(sound) { sound.cloneNode().play().catch(()=>{}); }
 
 /* =====================================================
    HELPERS
@@ -82,27 +91,15 @@ function safeDraw(img, x, y, w, h) {
     if (!img || !img.complete || img.naturalWidth === 0) return;
     ctx.drawImage(img, x, y, w, h);
 }
-function drawHitbox(x, y, w, h, color) {
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x, y, w, h);
-}
 function rectsOverlap(a, b) {
-    return (
-        a.x < b.x + b.w &&
-        a.x + a.w > b.x &&
-        a.y < b.y + b.h &&
-        a.y + a.h > b.y
-    );
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 function drawPlayerShadow(player) {
-    const groundY = GROUND_Y + player.height - 10;
-    const factor = Math.min(Math.abs(player.y - GROUND_Y) / 120, 1);
+    const factor = Math.min(Math.abs(player.y - player.groundY) / 120, 1);
     const radius = 20 - factor * 10;
-
     ctx.fillStyle = "rgba(0,0,0,0.35)";
     ctx.beginPath();
-    ctx.ellipse(player.x + player.width / 2, groundY, radius, radius * 0.45, 0, 0, Math.PI * 2);
+    ctx.ellipse(player.x + player.width / 2, player.groundY + player.height - 10, radius, radius * 0.45, 0, 0, Math.PI*2);
     ctx.fill();
 }
 
@@ -112,9 +109,6 @@ function drawPlayerShadow(player) {
 const background = new Image();
 background.src = "assets/background.png";
 
-/* =====================================================
-   COIN TYPES (RARITY CONTROLLED)
-===================================================== */
 const coinTypes = [
     { src: "assets/collectable/coin5.png", score: 5, weight: 50 },
     { src: "assets/collectable/coin10.png", score: 10, weight: 20 },
@@ -123,347 +117,150 @@ const coinTypes = [
     { src: "assets/collectable/coin100.png", score: 100, weight: 5 }
 ];
 coinTypes.forEach(c => { c.image = new Image(); c.image.src = c.src; });
+
 function getRandomCoinType() {
-    const totalWeight = coinTypes.reduce((sum, c) => sum + c.weight, 0);
-    let random = Math.random() * totalWeight;
-    for (const coin of coinTypes) {
-        if (random < coin.weight) return coin;
-        random -= coin.weight;
-    }
-    return coinTypes[coinTypes.length - 1];
+    const total = coinTypes.reduce((s,c)=>s+c.weight,0);
+    let r = Math.random()*total;
+    for (const c of coinTypes) { if (r<c.weight) return c; r-=c.weight; }
+    return coinTypes[0];
 }
 
 /* =====================================================
-   PLAYER ANIMATION ARRAYS
+   PLAYER ANIMATIONS
 ===================================================== */
-const runFrames = [];
-const jumpFrames = [];
+const runFrames = [], jumpFrames = [];
+for(let i=1;i<=8;i++){let img=new Image();img.src=`assets/run/run_${i}.png`;runFrames.push(img);}
+for(let i=1;i<=12;i++){let img=new Image();img.src=`assets/jump/jump_${i}.png`;jumpFrames.push(img);}
 
-/* =====================================================
-   PLAYER ANIMATION
-===================================================== */
-for (let i = 1; i <= 8; i++) {
-    const img = new Image();
-    img.src = `assets/run/run_${i}.png`;
-    runFrames.push(img);
-}
-
-for (let i = 1; i <= 12; i++) {
-    const img = new Image();
-    img.src = `assets/jump/jump_${i}.png`;
-    jumpFrames.push(img);
-}
 /* =====================================================
    PLAYER
 ===================================================== */
-const player = {
-    x: 20,
-    y: GROUND_Y,
-    width: 120,
-    height: 120,
-    velocityY: 0,
-    state: "run",
-    hitbox: { offsetX: 60, offsetY: 8, width: 26, height: 70 },
-    jumpCount: 0,
-    maxJumps: 2
-};
+const player = { x:20, y:0, width:120, height:120, velocityY:0, state:"run", hitbox:{offsetX:60,offsetY:8,width:26,height:70}, jumpCount:0, maxJumps:2 };
 
 /* =====================================================
-   OBSTACLE CONFIGS
+   OBSTACLES
 ===================================================== */
 const obstacleConfigs = [
-    { src: "assets/obstacle/obstacle1.png", width: 120, height: 170, yOffset: -45, hitbox: { offsetX:0, offsetY:0, width:120, height:170 }},
-    { src: "assets/obstacle/obstacle2.png", width: 100, height: 100, yOffset: 28, hitbox: { offsetX:0, offsetY:0, width:100, height:100 }},
-    { src: "assets/obstacle/obstacle3.png", width: 230, height: 150, yOffset: -10, hitbox: { offsetX:0, offsetY:40, width:230, height:110 }},
-    { src: "assets/obstacle/obstacle4.png", width: 120, height: 150, yOffset: -250, hitbox: { offsetX:0, offsetY:0, width:120, height:150 }},
-    { src: "assets/obstacle/obstacle6.png", width: 220, height: 150, yOffset: -250, hitbox: { offsetX:0, offsetY:0, width:220, height:150 }},
+    { src:"assets/obstacle/obstacle1.png", width:120,height:170,yOffset:-45,hitbox:{offsetX:0,offsetY:0,width:120,height:170} },
+    { src:"assets/obstacle/obstacle2.png", width:100,height:100,yOffset:28,hitbox:{offsetX:0,offsetY:0,width:100,height:100} },
+    { src:"assets/obstacle/obstacle3.png", width:230,height:150,yOffset:-10,hitbox:{offsetX:0,offsetY:40,width:230,height:110} },
+    { src:"assets/obstacle/obstacle4.png", width:120,height:150,yOffset:-250,hitbox:{offsetX:0,offsetY:0,width:120,height:150} },
+    { src:"assets/obstacle/obstacle6.png", width:220,height:150,yOffset:-250,hitbox:{offsetX:0,offsetY:0,width:220,height:150} },
 ];
-obstacleConfigs.forEach(o => { o.image = new Image(); o.image.src = o.src; });
-
-/* =====================================================
-   FLOATING WORDS & SCORES
-===================================================== */
-const floatingWords = [
-    { minSpeed: 0, words: ["Great", "Nice"] },
-    { minSpeed: 1.5, words: ["Amazing", "Fantastic"] },
-    { minSpeed: 2.5, words: ["Wonderful", "Unstoppable"] }
-];
-const scorePerPhase = [1, 5, 10]; // NEW: score for each floating word phase
-let floatingTexts = [];
-let floatingScores = [];
+obstacleConfigs.forEach(o=>{o.image=new Image();o.image.src=o.src;});
 
 /* =====================================================
    GAME STATE
 ===================================================== */
-let obstacles = [];
-let collectables = [];
-let backgroundX = 0;
-let score = 0;
-let gameOver = false;
-let animationFrame = 0;
-let animationTimer = 0;
-let gameStarted = false;
-let lastObstacleIndex = -1;
+let obstacles=[], collectables=[], backgroundX=0, score=0, gameOver=false, gameStarted=false, animationFrame=0, animationTimer=0;
+let floatingTexts=[], floatingScores=[];
+let nextObstacleTimer=0, nextCollectableTimer=120, lastObstacleIndex=-1;
 
 /* =====================================================
    INPUT
 ===================================================== */
 function handleInput() {
-    if (!gameStarted) {
-        gameStarted = true;
-        bgmSound.play().catch(()=>{});
-        runSound.play().catch(()=>{});
-        return;
-    }
-    if (gameOver) return restartGame();
-
-    if (player.jumpCount < player.maxJumps) {
-        player.velocityY = player.jumpCount === 0 ? JUMP_FORCE : SECOND_JUMP_FORCE;
-        player.state = "jump";
-        player.jumpCount++;
-        jumpSound.currentTime = 0;
-        jumpSound.play();
-        runSound.pause();
+    if(!gameStarted){ gameStarted=true; bgmSound.play().catch(()=>{}); runSound.play().catch(()=>{}); player.groundY = canvas.height - 150; return; }
+    if(gameOver) return restartGame();
+    if(player.jumpCount<player.maxJumps){ 
+        player.velocityY = player.jumpCount===0?JUMP_FORCE:SECOND_JUMP_FORCE;
+        player.state="jump"; player.jumpCount++; jumpSound.currentTime=0; jumpSound.play(); runSound.pause();
     }
 }
 canvas.addEventListener("touchstart", handleInput);
-document.addEventListener("keydown", e => e.code === "Space" && handleInput());
+document.addEventListener("keydown", e=>{ if(e.code==="Space") handleInput(); });
 
 /* =====================================================
-   SPAWN OBSTACLE
+   SPAWN FUNCTIONS
 ===================================================== */
-let nextObstacleTimer = 0;
-function spawnObstacle() {
-    if (obstacles.length >= MAX_OBSTACLES_ON_SCREEN) return;
-    let index;
-    do { index = Math.floor(Math.random() * obstacleConfigs.length); } while(index === lastObstacleIndex);
-    lastObstacleIndex = index;
-    const c = obstacleConfigs[index];
-    obstacles.push({ x: canvas.width + 40, y: GROUND_Y + c.yOffset, width: c.width, height: c.height, image: c.image, hitbox: c.hitbox, passed: false });
-    nextObstacleTimer = Math.floor(Math.random() * 100) + 80;
+function spawnObstacle(){
+    if(obstacles.length>=MAX_OBSTACLES_ON_SCREEN) return;
+    let index; do{ index=Math.floor(Math.random()*obstacleConfigs.length);}while(index===lastObstacleIndex); lastObstacleIndex=index;
+    const c=obstacleConfigs[index];
+    obstacles.push({x:canvas.width+40, y:player.groundY+c.yOffset, width:c.width, height:c.height, image:c.image, hitbox:c.hitbox, passed:false});
+    nextObstacleTimer=Math.floor(Math.random()*100)+80;
 }
-
-/* =====================================================
-   SPAWN COLLECTABLE
-===================================================== */
-let nextCollectableTimer = 120;
-function spawnCollectable() {
-    if (collectables.length >= MAX_COLLECTABLES_ON_SCREEN) return;
-    const type = getRandomCoinType();
-    const c = { x: canvas.width + 40, y: GROUND_Y - 30 - Math.random() * 200, width:50, height:50, hitbox:{ offsetX:0, offsetY:0, width:50, height:50 }, type: type };
-    for (const o of obstacles) {
-        const oHit = { x:o.x + o.hitbox.offsetX, y:o.y + o.hitbox.offsetY, w:o.hitbox.width, h:o.hitbox.height };
-        const cHit = { x:c.x + c.hitbox.offsetX, y:c.y + c.hitbox.offsetY, w:c.hitbox.width, h:c.hitbox.height };
-        if (rectsOverlap(oHit, cHit)) return;
+function spawnCollectable(){
+    if(collectables.length>=MAX_COLLECTABLES_ON_SCREEN) return;
+    const type=getRandomCoinType();
+    const c={x:canvas.width+40, y:player.groundY-30-Math.random()*200, width:50,height:50,hitbox:{offsetX:0,offsetY:0,width:50,height:50}, type:type};
+    for(const o of obstacles){ const oHit={x:o.x+o.hitbox.offsetX,y:o.y+o.hitbox.offsetY,w:o.hitbox.width,h:o.hitbox.height};
+        const cHit={x:c.x+c.hitbox.offsetX,y:c.y+c.hitbox.offsetY,w:c.hitbox.width,h:c.hitbox.height};
+        if(rectsOverlap(oHit,cHit)) return;
     }
     collectables.push(c);
-    nextCollectableTimer = Math.floor(Math.random() * 180) + 120;
+    nextCollectableTimer=Math.floor(Math.random()*180)+120;
 }
 
 /* =====================================================
    RESTART
 ===================================================== */
-function restartGame() {
-    obstacles = [];
-    collectables = [];
-    floatingTexts = [];
-    floatingScores = [];
-    score = 0;
-    gameOver = false;
-    speedMultiplier = 1;
-    player.y = GROUND_Y;
-    player.velocityY = 0;
-    player.jumpCount = 0;
-    player.state = "run";
+function restartGame(){
+    obstacles=[]; collectables=[]; floatingTexts=[]; floatingScores=[];
+    score=0; gameOver=false; speedMultiplier=1;
+    player.y=player.groundY; player.velocityY=0; player.jumpCount=0; player.state="run";
     runSound.play().catch(()=>{});
 }
 
 /* =====================================================
-   UPDATE
+   UPDATE & DRAW
 ===================================================== */
-function update() {
-    if (!gameStarted || gameOver) return;
+let lastTime = 0;
+function loop(timestamp){
+    const deltaTime = (timestamp - lastTime)/16.666; // approx 60fps reference
+    lastTime = timestamp;
 
-    speedMultiplier = Math.min(speedMultiplier + SPEED_INCREMENT, MAX_SPEED_MULTIPLIER);
-    const speed = GAME_SPEED * speedMultiplier;
+    if(gameStarted && !gameOver){
+        const speed = GAME_SPEED*speedMultiplier*deltaTime;
+        speedMultiplier = Math.min(speedMultiplier+SPEED_INCREMENT*deltaTime, MAX_SPEED_MULTIPLIER);
 
-    backgroundX -= speed;
-    if (backgroundX <= -canvas.width) backgroundX = 0;
+        backgroundX -= speed;
+        if(backgroundX<=-canvas.width) backgroundX=0;
 
-    player.velocityY += GRAVITY;
-    player.y += player.velocityY;
-    if (player.y >= GROUND_Y) {
-        player.y = GROUND_Y;
-        player.velocityY = 0;
-        player.jumpCount = 0;
-        if (player.state !== "run") { player.state = "run"; runSound.play().catch(()=>{}); }
+        player.velocityY += GRAVITY*deltaTime;
+        player.y += player.velocityY*deltaTime;
+        if(player.y>=player.groundY){ player.y=player.groundY; player.velocityY=0; player.jumpCount=0; if(player.state!=="run"){player.state="run"; runSound.play().catch(()=>{});} }
+
+        animationTimer += deltaTime;
+        if(animationTimer>3){ animationTimer=0; animationFrame++; if(player.state==="run" && animationFrame>=runFrames.length) animationFrame=0; if(player.state==="jump" && animationFrame>=jumpFrames.length) animationFrame=jumpFrames.length-1; }
+
+        if(nextObstacleTimer--<=0) spawnObstacle();
+        if(nextCollectableTimer--<=0) spawnCollectable();
+
+        obstacles.forEach(o=>o.x-=speed);
+        collectables.forEach(c=>c.x-=speed);
+
+        const pHit={x:player.x+player.hitbox.offsetX, y:player.y+player.hitbox.offsetY, w:player.hitbox.width, h:player.hitbox.height};
+        obstacles.forEach(o=>{ const h=o.hitbox; const oHit={x:o.x+h.offsetX, y:o.y+h.offsetY, w:h.width, h:h.height}; if(rectsOverlap(pHit,oHit)){ gameOverSound.play(); gameOver=true; runSound.pause(); }
+            if(!o.passed && o.x+o.width<player.x){ o.passed=true; score+=1; } // simplified scoring
+        });
+
+        collectables = collectables.filter(c=>{ const cHit={x:c.x+c.hitbox.offsetX,y:c.y+c.hitbox.offsetY,w:c.hitbox.width,h:c.hitbox.height}; if(rectsOverlap(pHit,cHit)){ score+=c.type.score; collectSound.play(); return false;} return c.x+c.width>0; });
+
+        floatingTexts.forEach(ft=>{ ft.y-=1.2*deltaTime; ft.opacity-=0.02*deltaTime; });
+        floatingTexts=floatingTexts.filter(ft=>ft.opacity>0);
+        floatingScores.forEach(fs=>{ fs.y-=1.2*deltaTime; fs.opacity-=0.02*deltaTime; });
+        floatingScores=floatingScores.filter(fs=>fs.opacity>0);
+
+        obstacles=obstacles.filter(o=>o.x+o.width>0);
     }
 
-    animationTimer++;
-    if (animationTimer > 3) {
-        animationTimer = 0;
-        animationFrame++;
-        if (player.state === "run" && animationFrame >= runFrames.length) animationFrame = 0;
-        if (player.state === "jump" && animationFrame >= jumpFrames.length) animationFrame = jumpFrames.length - 1;
-    }
-
-    if (nextObstacleTimer-- <= 0) spawnObstacle();
-    if (nextCollectableTimer-- <= 0) spawnCollectable();
-
-    obstacles.forEach(o => o.x -= speed);
-    collectables.forEach(c => c.x -= speed);
-
-    const pHit = { x:player.x + player.hitbox.offsetX, y:player.y + player.hitbox.offsetY, w:player.hitbox.width, h:player.hitbox.height };
-
-    obstacles.forEach(o => {
-        const h = o.hitbox;
-        const oHit = { x:o.x + h.offsetX, y:o.y + h.offsetY, w:h.width, h:h.height };
-        if (rectsOverlap(pHit, oHit)) { gameOverSound.play(); gameOver = true; runSound.pause(); }
-
-        if (!o.passed && o.x + o.width < player.x) {
-            o.passed = true;
-
-            // Determine current floating word phase
-            let phaseIndex = 0;
-            let wordsForSpeed = floatingWords[0].words;
-            for (let i = 0; i < floatingWords.length; i++) {
-                if (speedMultiplier >= floatingWords[i].minSpeed) {
-                    wordsForSpeed = floatingWords[i].words;
-                    phaseIndex = i;
-                }
-            }
-
-            // Score based on phase
-            const obstacleScore = scorePerPhase[phaseIndex];
-            score += obstacleScore;
-
-            // Play score sound
-            obstacleScoreSound.currentTime = 0;
-            obstacleScoreSound.play();
-
-            // Show floating score
-            floatingScores.push({
-                x: player.x + player.width / 2,
-                y: player.y - 50,
-                value: "+" + obstacleScore,
-                opacity: 1,
-                speedY: 1.2 + speedMultiplier * 0.2
-            });
-
-            // Show floating word
-            const randomWord = wordsForSpeed[Math.floor(Math.random() * wordsForSpeed.length)];
-            floatingTexts.push({
-                x: player.x + player.width / 2,
-                y: player.y - 20,
-                text: randomWord,
-                opacity: 1,
-                speedY: 1 + speedMultiplier * 0.5
-            });
-        }
-    });
-
-    collectables = collectables.filter(c => {
-        const cHit = { x:c.x + c.hitbox.offsetX, y:c.y + c.hitbox.offsetY, w:c.hitbox.width, h:c.hitbox.height };
-        if (rectsOverlap(pHit, cHit)) {
-            score += c.type.score;
-            collectSound.play();
-
-            // Floating score for coin
-            floatingScores.push({
-                x: c.x + c.width / 2,
-                y: c.y,
-                value: "+" + c.type.score,
-                opacity: 1,
-                speedY: 1.5 + speedMultiplier * 0.3
-            });
-
-            return false;
-        }
-        return c.x + c.width > 0;
-    });
-
-    // Update floating texts
-    floatingTexts.forEach(ft => { ft.y -= ft.speedY; ft.opacity -= 0.02; });
-    floatingTexts = floatingTexts.filter(ft => ft.opacity > 0);
-
-    // Update floating scores
-    floatingScores.forEach(fs => {
-        fs.y -= fs.speedY;
-        fs.opacity -= 0.02 + (speedMultiplier-1)*0.01;
-    });
-    floatingScores = floatingScores.filter(fs => fs.opacity > 0);
-
-    obstacles = obstacles.filter(o => o.x + o.width > 0);
-}
-
-/* =====================================================
-   DRAW
-===================================================== */
-function draw() {
+    // DRAW
     ctx.clearRect(0,0,canvas.width,canvas.height);
-
-    if (!gameStarted) {
-        ctx.fillStyle="#fff"; ctx.font="26px Arial"; ctx.textAlign="center";
-        ctx.fillText("Fast Travel Running Game",canvas.width/2,canvas.height/2);
-        ctx.font="18px Arial";
-        ctx.fillText("Click anywhere to start",canvas.width/2,canvas.height/2+30);
-        return;
-    }
-
-    safeDraw(background, backgroundX, 0, canvas.width, canvas.height);
-    safeDraw(background, backgroundX + canvas.width, 0, canvas.width, canvas.height);
-
+    safeDraw(background,backgroundX,0,canvas.width,canvas.height);
+    safeDraw(background,backgroundX+canvas.width,0,canvas.width,canvas.height);
     drawPlayerShadow(player);
-    const img = player.state === "run" ? runFrames[animationFrame] : jumpFrames[animationFrame];
-    safeDraw(img, player.x, player.y, player.width, player.height);
-
-    obstacles.forEach(o => safeDraw(o.image, o.x, o.y, o.width, o.height));
-    collectables.forEach(c => safeDraw(c.type.image, c.x, c.y, c.width, c.height));
-
-    // Draw floating texts
-    floatingTexts.forEach(ft => {
-        ctx.globalAlpha = ft.opacity;
-        if (speedMultiplier < 1.5) ctx.fillStyle = "#fff";
-        else if (speedMultiplier < 2.5) ctx.fillStyle = "#edf507";
-        else ctx.fillStyle = "#f52b07";
-        ctx.font = `${20 + speedMultiplier * 3}px Arial`;
-        ctx.textAlign = "center";
-        ctx.fillText(ft.text, ft.x, ft.y);
-        ctx.globalAlpha = 1;
-    });
-
-    // Draw floating scores
-    floatingScores.forEach(fs => {
-        ctx.globalAlpha = fs.opacity;
-        ctx.fillStyle = "#ffffff";
-        ctx.font = `${18 + speedMultiplier*2}px Arial`;
-        ctx.textAlign = "center";
-        ctx.fillText(fs.value, fs.x, fs.y);
-        ctx.globalAlpha = 1;
-    });
+    safeDraw(player.state==="run"?runFrames[animationFrame]:jumpFrames[animationFrame], player.x, player.y, player.width, player.height);
+    obstacles.forEach(o=>safeDraw(o.image,o.x,o.y,o.width,o.height));
+    collectables.forEach(c=>safeDraw(c.type.image,c.x,c.y,c.width,c.height));
 
     ctx.fillStyle="#fff"; ctx.font="18px Arial"; ctx.textAlign="left"; ctx.fillText("Score: "+score,10,30);
+    if(!gameStarted){ ctx.textAlign="center"; ctx.font="26px Arial"; ctx.fillText("Fast Travel Running Game",canvas.width/2,canvas.height/2); ctx.font="18px Arial"; ctx.fillText("Tap to Start",canvas.width/2,canvas.height/2+30); }
+    if(gameOver){ ctx.textAlign="center"; ctx.fillText("Game Over",canvas.width/2,canvas.height/2); ctx.fillText("Final Score: "+score,canvas.width/2,canvas.height/2+30); }
 
-    if (gameOver) { 
-        ctx.textAlign="center"; 
-        ctx.fillText("Game Over",canvas.width/2,canvas.height/2); 
-        ctx.fillText("Final Score: "+score,canvas.width/2,canvas.height/2+30); 
-    }
-
-    if (DEBUG_HITBOX) {
-        drawHitbox(player.x + player.hitbox.offsetX, player.y + player.hitbox.offsetY, player.hitbox.width, player.hitbox.height, "lime");
-        obstacles.forEach(o => { const h=o.hitbox; drawHitbox(o.x+h.offsetX,o.y+h.offsetY,h.width,h.height,"red"); });
-        collectables.forEach(c => { drawHitbox(c.x+c.hitbox.offsetX,c.y+c.hitbox.offsetY,c.hitbox.width,c.hitbox.height,"yellow"); });
-    }
+    requestAnimationFrame(loop);
 }
-
-/* =====================================================
-   LOOP
-===================================================== */
-function loop() { update(); draw(); requestAnimationFrame(loop); }
-loop();
+requestAnimationFrame(loop);
 </script>
 </body>
 </html>
-
-
