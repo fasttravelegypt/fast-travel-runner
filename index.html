@@ -80,7 +80,13 @@ runSound.loop = true; runSound.volume = 0.5;
 ===================================================== */
 function safeDraw(img, x, y, w, h) {
     if (!img || !img.complete || img.naturalWidth === 0) return;
-    ctx.drawImage(img, x, y, w, h);
+    ctx.drawImage(
+    img,
+    Math.round(x),
+    Math.round(y),
+    Math.round(w),
+    Math.round(h)
+);
 }
 function drawHitbox(x, y, w, h, color) {
     ctx.strokeStyle = color;
@@ -334,7 +340,7 @@ function update() {
     speedMultiplier = Math.min(speedMultiplier + SPEED_INCREMENT, MAX_SPEED_MULTIPLIER);
     const speed = GAME_SPEED * speedMultiplier;
 
-    backgroundX -= speed;
+backgroundX = Math.floor(backgroundX - speed);
     if (backgroundX <= -canvas.width) backgroundX = 0;
 
     player.velocityY += GRAVITY;
