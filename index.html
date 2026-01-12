@@ -243,6 +243,13 @@ let floatingTexts = [];
 let floatingScores = [];
 
 /* =====================================================
+   OBJECT POOLS (GC OPTIMIZATION)
+===================================================== */
+const floatingTextPool = [];
+const floatingScorePool = [];
+
+
+/* =====================================================
    GAME STATE
 ===================================================== */
 let obstacles = [];
@@ -254,6 +261,14 @@ let animationFrame = 0;
 let animationTimer = 0;
 let gameStarted = false;
 let lastObstacleIndex = -1;
+
+/* =====================================================
+   REUSED HITBOX OBJECTS (GC OPTIMIZATION)
+===================================================== */
+const pHit = { x:0, y:0, w:0, h:0 };
+const oHit = { x:0, y:0, w:0, h:0 };
+const cHit = { x:0, y:0, w:0, h:0 };
+
 
 /* =====================================================
    INPUT
@@ -305,8 +320,16 @@ function spawnCollectable() {
     const type = getRandomCoinType();
     const c = { x: canvas.width + 40, y: GROUND_Y - 30 - Math.random() * 200, width:50, height:50, hitbox:{ offsetX:0, offsetY:0, width:50, height:50 }, type: type };
     for (const o of obstacles) {
-        const oHit = { x:o.x + o.hitbox.offsetX, y:o.y + o.hitbox.offsetY, w:o.hitbox.width, h:o.hitbox.height };
-        const cHit = { x:c.x + c.hitbox.offsetX, y:c.y + c.hitbox.offsetY, w:c.hitbox.width, h:c.hitbox.height };
+const h = o.hitbox;
+oHit.x = o.x + h.offsetX;
+oHit.y = o.y + h.offsetY;
+oHit.w = h.width;
+oHit.h = h.height;
+cHit.x = c.x + c.hitbox.offsetX;
+cHit.y = c.y + c.hitbox.offsetY;
+cHit.w = c.hitbox.width;
+cHit.h = c.hitbox.height;
+
         if (rectsOverlap(oHit, cHit)) return;
     }
     collectables.push(c);
@@ -366,7 +389,11 @@ backgroundX = Math.floor(backgroundX - speed);
     obstacles.forEach(o => o.x -= speed);
     collectables.forEach(c => c.x -= speed);
 
-    const pHit = { x:player.x + player.hitbox.offsetX, y:player.y + player.hitbox.offsetY, w:player.hitbox.width, h:player.hitbox.height };
+pHit.x = player.x + player.hitbox.offsetX;
+pHit.y = player.y + player.hitbox.offsetY;
+pHit.w = player.hitbox.width;
+pHit.h = player.hitbox.height;
+
 
     obstacles.forEach(o => {
         const h = o.hitbox;
@@ -395,23 +422,25 @@ backgroundX = Math.floor(backgroundX - speed);
             obstacleScoreSound.play();
 
             // Show floating score
-            floatingScores.push({
-                x: player.x + player.width / 2,
-                y: player.y - 50,
-                value: "+" + obstacleScore,
-                opacity: 1,
-                speedY: 1.2 + speedMultiplier * 0.2
-            });
+const fs = floatingScorePool.pop() || {};
+fs.x = player.x + player.width / 2;
+fs.y = player.y - 50;
+fs.value = "+" + obstacleScore;
+fs.opacity = 1;
+fs.speedY = 1.2 + speedMultiplier * 0.2;
+floatingScores.push(fs);
+
 
             // Show floating word
             const randomWord = wordsForSpeed[Math.floor(Math.random() * wordsForSpeed.length)];
-            floatingTexts.push({
-                x: player.x + player.width / 2,
-                y: player.y - 20,
-                text: randomWord,
-                opacity: 1,
-                speedY: 1 + speedMultiplier * 0.5
-            });
+const ft = floatingTextPool.pop() || {};
+ft.x = player.x + player.width / 2;
+ft.y = player.y - 20;
+ft.text = randomWord;
+ft.opacity = 1;
+ft.speedY = 1 + speedMultiplier * 0.5;
+floatingTexts.push(ft);
+
         }
     });
 
@@ -422,13 +451,13 @@ backgroundX = Math.floor(backgroundX - speed);
             collectSound.play();
 
             // Floating score for coin
-            floatingScores.push({
-                x: c.x + c.width / 2,
-                y: c.y,
-                value: "+" + c.type.score,
-                opacity: 1,
-                speedY: 1.5 + speedMultiplier * 0.3
-            });
+const fs = floatingScorePool.pop() || {};
+fs.x = c.x + c.width / 2;
+fs.y = c.y;
+fs.value = "+" + c.type.score;
+fs.opacity = 1;
+fs.speedY = 1.5 + speedMultiplier * 0.3;
+floatingScores.push(fs);
 
             return false;
         }
@@ -437,14 +466,28 @@ backgroundX = Math.floor(backgroundX - speed);
 
     // Update floating texts
     floatingTexts.forEach(ft => { ft.y -= ft.speedY; ft.opacity -= 0.02; });
-    floatingTexts = floatingTexts.filter(ft => ft.opacity > 0);
+    floatingTexts = floatingTexts.filter(ft => {
+    if (ft.opacity <= 0) {
+        floatingTextPool.push(ft);
+        return false;
+    }
+    return true;
+});
+
 
     // Update floating scores
     floatingScores.forEach(fs => {
         fs.y -= fs.speedY;
         fs.opacity -= 0.02 + (speedMultiplier-1)*0.01;
     });
-    floatingScores = floatingScores.filter(fs => fs.opacity > 0);
+    floatingScores = floatingScores.filter(fs => {
+    if (fs.opacity <= 0) {
+        floatingScorePool.push(fs);
+        return false;
+    }
+    return true;
+});
+
 
     obstacles = obstacles.filter(o => o.x + o.width > 0);
 }
