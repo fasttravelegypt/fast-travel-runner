@@ -135,9 +135,17 @@ function getRandomCoinType() {
 /* =====================================================
    PLAYER ANIMATION
 ===================================================== */
-const runFrames = [], jumpFrames = [];
-for (let i = 1; i <= 8; i++) { const img = new Image(); img.src = `assets/run/run (${i}).png`; runFrames.push(img); }
-for (let i = 1; i <= 12; i++) { const img = new Image(); img.src = `assets/jump/Jump (${i}).png`; jumpFrames.push(img); }
+for (let i = 1; i <= 8; i++) {
+    const img = new Image();
+    img.src = `assets/run/run_${i}.png`;
+    runFrames.push(img);
+}
+
+for (let i = 1; i <= 12; i++) {
+    const img = new Image();
+    img.src = `assets/jump/jump_${i}.png`;
+    jumpFrames.push(img);
+}
 
 /* =====================================================
    PLAYER
@@ -451,4 +459,5 @@ loop();
 </script>
 </body>
 </html>
+
 
