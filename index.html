@@ -261,6 +261,7 @@ let animationFrame = 0;
 let animationTimer = 0;
 let gameStarted = false;
 let lastObstacleIndex = -1;
+let lastTime = performance.now();
 
 /* =====================================================
    REUSED HITBOX OBJECTS (GC OPTIMIZATION)
@@ -360,7 +361,15 @@ function restartGame() {
 function update() {
     if (!gameStarted || gameOver) return;
 
-    speedMultiplier = Math.min(speedMultiplier + SPEED_INCREMENT, MAX_SPEED_MULTIPLIER);
+    const now = performance.now();
+const delta = Math.min((now - lastTime) / 16.67, 2);
+lastTime = now;
+
+speedMultiplier = Math.min(
+    speedMultiplier + SPEED_INCREMENT * delta,
+    MAX_SPEED_MULTIPLIER
+);
+
     const speed = GAME_SPEED * speedMultiplier;
 
 backgroundX = Math.floor(backgroundX - speed);
