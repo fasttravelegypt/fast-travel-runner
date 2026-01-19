@@ -45,11 +45,11 @@ const ctx = canvas.getContext("2d");
 /* =====================================================
    CONSTANTS
 ===================================================== */
-const GAME_SPEED = 4;
+const GAME_SPEED = 5;
 const GRAVITY = 0.7;
-const JUMP_FORCE = -18;
-const SECOND_JUMP_FORCE = -14;
-const GROUND_Y = canvas.height - 150;
+const JUMP_FORCE = -12;
+const SECOND_JUMP_FORCE = -10;
+const GROUND_Y = canvas.height -225;
 const DEBUG_HITBOX = false;
 
 const MAX_OBSTACLES_ON_SCREEN = 4;
@@ -107,7 +107,7 @@ function rectsOverlap(a, b) {
 function drawPlayerShadow(player) {
     const groundY = GROUND_Y + player.height - 10;
     const factor = Math.min(Math.abs(player.y - GROUND_Y) / 120, 1);
-    const radius = 20 - factor * 10;
+    const radius = 12 - factor * 10;
 
     ctx.fillStyle = "rgba(0,0,0,0.35)";
     ctx.beginPath();
@@ -208,30 +208,55 @@ registerAsset(img);
    PLAYER
 ===================================================== */
 const player = {
-    x: 20,
+    x: 10,
     y: GROUND_Y,
-    width: 120,
-    height: 120,
+    width: 60,
+    height: 60,
     velocityY: 0,
     state: "run",
-    hitbox: { offsetX: 60, offsetY: 8, width: 26, height: 70 },
+    hitbox: { offsetX: 25, offsetY: 10, width: 20, height: 40 },
     jumpCount: 0,
-    maxJumps: 2
+    maxJumps: 2,
+    isFalling: false,
+    fallSpeed: 0,
 };
+
 
 /* =====================================================
    OBSTACLE CONFIGS
 ===================================================== */
 const obstacleConfigs = [
-    { src: "assets/obstacle/obstacle1.png", width: 120, height: 170, yOffset: -45, hitbox: { offsetX:0, offsetY:0, width:120, height:170 }},
-    { src: "assets/obstacle/obstacle2.png", width: 100, height: 100, yOffset: 28, hitbox: { offsetX:0, offsetY:0, width:100, height:100 }},
-    { src: "assets/obstacle/obstacle3.png", width: 230, height: 150, yOffset: -10, hitbox: { offsetX:0, offsetY:40, width:230, height:110 }},
-    { src: "assets/obstacle/obstacle4.png", width: 120, height: 150, yOffset: -250, hitbox: { offsetX:0, offsetY:0, width:120, height:150 }},
-    { src: "assets/obstacle/obstacle6.png", width: 220, height: 150, yOffset: -250, hitbox: { offsetX:0, offsetY:0, width:220, height:150 }},
+    { 
+        type: "fridge",
+        width: Math.round(player.width * 0.7),
+        height: Math.round(player.height * 1.3),
+        yOffset: -(Math.round(player.height * 1.3) - player.height)
+    },
+    { 
+        type: "table",
+        width: Math.round(player.width * 1.4),
+        height: Math.round(player.height * 0.6),
+        yOffset: -(Math.round(player.height * 0.6) - player.height)
+    },
+    {
+        type: "oven",
+        width: Math.round(player.width * 0.8),
+        height: Math.round(player.height * 0.9),
+        yOffset: -(Math.round(player.height * 0.9) - player.height) // corrected
+    },
+{
+    type: "shelf",
+    width: Math.round(player.width * 1.6),
+    height: Math.round(player.height * 0.7), // shelf body height
+    yOffset: -(Math.round(player.height * 1.8) - player.height)
+},
+{
+    type: "hole",
+    width: Math.round(player.width * 1.1),
+    height: Math.round(player.height * 0.35),
+    yOffset: -(Math.round(player.height * .3) - player.height)
+},
 ];
-obstacleConfigs.forEach(o => { o.image = new Image(); o.image.src = o.src; });
-obstacleConfigs.forEach(o => registerAsset(o.image));
-
 
 /* =====================================================
    FLOATING WORDS & SCORES
@@ -309,13 +334,24 @@ document.addEventListener("keydown", e => e.code === "Space" && handleInput());
 let nextObstacleTimer = 0;
 function spawnObstacle() {
     if (obstacles.length >= MAX_OBSTACLES_ON_SCREEN) return;
-    let index;
-    do { index = Math.floor(Math.random() * obstacleConfigs.length); } while(index === lastObstacleIndex);
-    lastObstacleIndex = index;
+
+    const index = Math.floor(Math.random() * obstacleConfigs.length);
     const c = obstacleConfigs[index];
-    obstacles.push({ x: canvas.width + 40, y: GROUND_Y + c.yOffset, width: c.width, height: c.height, image: c.image, hitbox: c.hitbox, passed: false });
-    nextObstacleTimer = Math.floor(Math.random() * 100) + 80;
+
+    obstacles.push({
+        x: canvas.width + 40,
+        y: GROUND_Y + c.yOffset,
+        width: c.width,
+        height: c.height,
+        type: c.type,
+        hitbox: { offsetX: 0, offsetY: 0, width: c.width, height: c.height },
+        passed: false
+    });
+
+    nextObstacleTimer = Math.floor(Math.random() * 100) + 30;
 }
+
+
 
 /* =====================================================
    SPAWN COLLECTABLE
@@ -342,6 +378,7 @@ cHit.h = c.hitbox.height;
     nextCollectableTimer = Math.floor(Math.random() * 180) + 120;
 }
 
+
 /* =====================================================
    RESTART
 ===================================================== */
@@ -358,6 +395,7 @@ function restartGame() {
     player.jumpCount = 0;
     player.state = "run";
     runSound.play().catch(()=>{});
+    player.isFalling = false;
 }
 
 /* =====================================================
@@ -365,6 +403,23 @@ function restartGame() {
 ===================================================== */
 function update() {
     if (!gameStarted || gameOver) return;
+
+// PLAYER FALLING INTO HOLE
+if (player.isFalling) {
+    player.fallSpeed += 0.5;
+    player.y += player.fallSpeed;
+
+    // Disable normal movement
+    player.isJumping = false;
+if (player.y > canvas.height) {
+    gameOver = true;
+    runSound.pause();
+    gameOverSound.play();
+}
+
+
+    return; // IMPORTANT: skip rest of update
+}
 
     const now = performance.now();
 const delta = Math.min((now - lastTime) / 16.67, 2);
@@ -382,12 +437,16 @@ backgroundX = Math.floor(backgroundX - speed);
 
     player.velocityY += GRAVITY;
     player.y += player.velocityY;
-    if (player.y >= GROUND_Y) {
-        player.y = GROUND_Y;
-        player.velocityY = 0;
-        player.jumpCount = 0;
-        if (player.state !== "run") { player.state = "run"; runSound.play().catch(()=>{}); }
+if (!player.isFalling && player.y >= GROUND_Y) {
+    player.y = GROUND_Y;
+    player.velocityY = 0;
+    player.jumpCount = 0;
+    if (player.state !== "run") { 
+        player.state = "run"; 
+        runSound.play().catch(()=>{}); 
     }
+}
+
 
     animationTimer++;
     if (animationTimer > 3) {
@@ -410,9 +469,40 @@ pHit.h = player.hitbox.height;
 
 
     obstacles.forEach(o => {
-        const h = o.hitbox;
-        const oHit = { x:o.x + h.offsetX, y:o.y + h.offsetY, w:h.width, h:h.height };
-        if (rectsOverlap(pHit, oHit)) { gameOverSound.play(); gameOver = true; runSound.pause(); }
+// HOLE LOGIC (BEFORE collision)
+// HOLE LOGIC (BEFORE collision)
+if (o.type === "hole" && !player.isFalling) {
+    const playerLeft = player.x;
+    const playerRight = player.x + player.width;
+    const holeLeft = o.x;
+    const holeRight = o.x + o.width;
+
+    const onGround = player.y + player.height >= GROUND_Y - 2;
+    const margin = 2; // 2px margin
+    // Player falls only if fully over the hole
+if (
+    playerLeft + margin >= holeLeft &&
+    playerRight - margin <= holeRight &&
+    onGround &&
+    !player.isJumping
+) {
+    player.isFalling = true;
+    player.fallSpeed = 2;
+    player.jumpCount = player.maxJumps;
+}
+}
+
+
+// Skip collision for holes
+if (o.type !== "hole") {
+    const h = o.hitbox;
+    const oHit = { x:o.x + h.offsetX, y:o.y + h.offsetY, w:h.width, h:h.height };
+    if (rectsOverlap(pHit, oHit)) {
+        gameOverSound.play();
+        gameOver = true;
+        runSound.pause();
+    }
+}
 
         if (!o.passed && o.x + o.width < player.x) {
             o.passed = true;
@@ -507,6 +597,40 @@ floatingScores.push(fs);
 }
 
 /* =====================================================
+   HOLE DRAWING (SPLIT FOR DEPTH)
+===================================================== */
+function drawHoleBottom(o) {
+     //Dark interior
+    ctx.fillStyle = "#000";
+    ctx.beginPath();
+    ctx.ellipse(
+        o.x + o.width / 2,
+        GROUND_Y + o.height * 1.8,
+        o.width * 0,
+        o.height * 0,
+        0, 0, Math.PI * 2
+    );
+    ctx.fill();
+}
+
+function drawHoleTop(o) {
+    // Rim
+    ctx.fillStyle = "#000";
+    ctx.beginPath();
+    ctx.ellipse(
+        o.x + o.width / 2,
+        GROUND_Y + o.height * 2.15,
+        o.width * 0.6,
+        o.height * 0.3,
+        0, 0, Math.PI * 2
+    );
+    ctx.fill();
+
+    ctx.strokeStyle = "#777";
+    ctx.stroke();
+}
+
+/* =====================================================
    DRAW
 ===================================================== */
 function draw() {
@@ -535,11 +659,157 @@ function draw() {
     safeDraw(background, backgroundX, 0, canvas.width, canvas.height);
     safeDraw(background, backgroundX + canvas.width, 0, canvas.width, canvas.height);
 
-    drawPlayerShadow(player);
-    const img = player.state === "run" ? runFrames[animationFrame] : jumpFrames[animationFrame];
-    safeDraw(img, player.x, player.y, player.width, player.height);
+// ===============================
+// HOLE BOTTOM (BEHIND PLAYER)
+// ===============================
+obstacles.forEach(o => {
+    if (o.type === "hole") {
+        drawHoleBottom(o);
+    }
+});
 
-    obstacles.forEach(o => safeDraw(o.image, o.x, o.y, o.width, o.height));
+
+drawPlayerShadow(player);
+
+if (player.isFalling) {
+    ctx.save();
+
+    // Clip player so lower body disappears into hole
+    ctx.beginPath();
+    ctx.rect(
+        0,
+        0,
+        canvas.width,
+        GROUND_Y + player.height * 0.55
+    );
+    ctx.clip();
+}
+
+const img = player.state === "run" ? runFrames[animationFrame] : jumpFrames[animationFrame];
+safeDraw(img, player.x, player.y, player.width, player.height);
+
+if (player.isFalling) {
+    ctx.restore();
+}
+
+// ===============================
+// HOLE TOP (COVERS PLAYER)
+// ===============================
+obstacles.forEach(o => {
+    if (o.type === "hole") {
+        drawHoleTop(o);
+    }
+});
+
+
+obstacles.forEach(o => {
+    switch(o.type) {
+        case "fridge":
+            // Fridge body
+            ctx.fillStyle = "#d9d9d9";
+            ctx.fillRect(o.x, o.y, o.width, o.height);
+            ctx.strokeStyle = "#555";
+            ctx.strokeRect(o.x, o.y, o.width, o.height);
+
+            // Doors
+            ctx.strokeStyle = "#bbb";
+            ctx.beginPath();
+            ctx.moveTo(o.x, o.y + o.height / 2);
+            ctx.lineTo(o.x + o.width, o.y + o.height / 2);
+            ctx.stroke();
+
+            // Handles
+            ctx.fillStyle = "#888";
+            ctx.fillRect(o.x + o.width - Math.round(o.width*0.1), o.y + Math.round(o.height*0.1), Math.round(o.width*0.1), Math.round(o.height*0.1));
+            ctx.fillRect(o.x + o.width - Math.round(o.width*0.1), o.y + o.height / 2 + Math.round(o.height*0.1), Math.round(o.width*0.1), Math.round(o.height*0.1));
+            break;
+
+        case "table":
+            // Table top
+            ctx.fillStyle = "#8B5A2B";
+            ctx.fillRect(o.x, o.y, o.width, Math.round(o.height * 0.2));
+            ctx.strokeStyle = "#654321";
+            ctx.strokeRect(o.x, o.y, o.width, Math.round(o.height * 0.2));
+
+            // Table legs
+            const legWidth = Math.round(o.width * 0.08);
+            const legHeight = Math.round(o.height * 0.8);
+            const legOffsetX = Math.round(o.width * 0.05);
+            const legOffsetY = Math.round(o.height * 0.2);
+            ctx.fillStyle = "#7B4F2A";
+            ctx.fillRect(o.x + legOffsetX, o.y + legOffsetY, legWidth, legHeight);
+            ctx.fillRect(o.x + o.width - legOffsetX - legWidth, o.y + legOffsetY, legWidth, legHeight);
+            ctx.fillRect(o.x + o.width / 2 - legWidth / 2, o.y + legOffsetY, legWidth, legHeight);
+
+            // Optional shading
+            ctx.fillStyle = "rgba(0,0,0,0.1)";
+            ctx.fillRect(o.x, o.y + Math.round(o.height * 0.2), o.width, 2);
+
+    case "oven":
+        // Oven body
+        ctx.fillStyle = "#bfbfbf"; // light grey body
+        ctx.fillRect(o.x, o.y, o.width, o.height);
+        ctx.strokeStyle = "#666"; // darker grey border
+        ctx.strokeRect(o.x, o.y, o.width, o.height);
+
+        // Oven door window
+        const windowHeight = Math.round(o.height * 0.5);
+        const windowY = o.y + Math.round(o.height * 0.3);
+        ctx.fillStyle = "#888"; // medium grey glass
+        ctx.fillRect(o.x + 5, windowY, o.width - 10, windowHeight);
+        ctx.strokeStyle = "#555";
+        ctx.strokeRect(o.x + 5, windowY, o.width - 10, windowHeight);
+
+        // Oven handle
+        const handleHeight = Math.round(o.height * 0.05);
+        const handleY = windowY - handleHeight - 2;
+        ctx.fillStyle = "#999"; // grey handle
+        ctx.fillRect(o.x + 5, handleY, o.width - 10, handleHeight);
+
+        // Bottom vent detail
+        const ventHeight = Math.round(o.height * 0.05);
+        ctx.fillStyle = "#777"; // darker grey
+        ctx.fillRect(o.x + 5, o.y + o.height - ventHeight - 2, o.width - 10, ventHeight);
+            break;
+
+
+
+case "shelf":
+    // Shelf body (top rectangle)
+    ctx.fillStyle = "#bfbfbf"; // light grey
+    const shelfHeight = Math.round(o.height * 0.15);
+    ctx.fillRect(o.x, o.y, o.width, shelfHeight);
+    ctx.strokeStyle = "#777"; // border
+    ctx.strokeRect(o.x, o.y, o.width, shelfHeight);
+
+    // Hanging pans
+    const panSizes = [0.15, 0.2, 0.12]; // relative to shelf width
+    const panYOffset = shelfHeight + 5; // distance below shelf
+    panSizes.forEach((sizeFactor, index) => {
+        const panDiameter = Math.round(o.width * sizeFactor);
+        const panX = o.x + Math.round((o.width / 4) * (index + 0.5) - panDiameter / 2);
+        const panY = o.y + panYOffset;
+
+        // Draw round pan
+        ctx.fillStyle = "#999"; // medium grey
+        ctx.beginPath();
+        ctx.arc(panX + panDiameter/2, panY + panDiameter/2, panDiameter/2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#555"; // border
+        ctx.stroke();
+
+        // Draw straight handle (rectangle hanging from shelf)
+        const handleWidth = Math.round(panDiameter * 0.1);
+        const handleHeight = panY - o.y; // distance from shelf to pan top
+        ctx.fillStyle = "#777"; // handle color
+        ctx.fillRect(panX + panDiameter/2 - handleWidth/2, o.y + shelfHeight, handleWidth, handleHeight);
+    });
+    break;
+    }
+});
+
+
+
     collectables.forEach(c => safeDraw(c.type.image, c.x, c.y, c.width, c.height));
 
     // Draw floating texts
@@ -548,7 +818,7 @@ function draw() {
         if (speedMultiplier < 1.5) ctx.fillStyle = "#fff";
         else if (speedMultiplier < 2.5) ctx.fillStyle = "#edf507";
         else ctx.fillStyle = "#f52b07";
-        ctx.font = `${20 + speedMultiplier * 3}px Arial`;
+        ctx.font = `${10 + speedMultiplier * 3}px Arial`;
         ctx.textAlign = "center";
         ctx.fillText(ft.text, ft.x, ft.y);
         ctx.globalAlpha = 1;
