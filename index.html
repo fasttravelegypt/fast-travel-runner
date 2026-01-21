@@ -51,7 +51,7 @@ const JUMP_FORCE = -12;
 const SECOND_JUMP_FORCE = -10;
 const GROUND_Y = canvas.height -225;
 const DEBUG_HITBOX = false;
-
+const DISTANCE_SCORE_RATE = 0.01; // 1 score per 100 pixels (tune later)
 const MAX_OBSTACLES_ON_SCREEN = 4;
 const MAX_COLLECTABLES_ON_SCREEN = 2;
 const FIXED_FPS = 60;
@@ -71,9 +71,12 @@ const MAX_SPEED_MULTIPLIER = 3;
 const jumpSound = new Audio("assets/jump.mp3");
 const gameOverSound = new Audio("assets/gameover.mp3");
 const collectSound = new Audio("assets/collect.mp3");
-const obstacleScoreSound = new Audio("assets/score.mp3");
 const bgmSound = new Audio("assets/bgm.mp3");
 const runSound = new Audio("assets/run_sound.mp3");
+const scoreTickSound = new Audio("assets/tick.mp3");
+scoreTickSound.volume = 0.5; // adjust as needed
+
+
 
 bgmSound.loop = true; bgmSound.volume = 0.3;
 runSound.loop = true; runSound.volume = 0.5;
@@ -115,6 +118,17 @@ function drawPlayerShadow(player) {
     ctx.fill();
 }
 
+function spawnPlayerComboText(text) {
+    const ft = floatingTextPool.pop() || {};
+    ft.x = player.x + player.width / 2;
+    ft.y = player.y - 10;
+    ft.text = text;
+    ft.opacity = 1;
+    ft.speedY = 0.8;
+    ft.followPlayer = true; // NEW FLAG
+    floatingTexts.push(ft);
+}
+
 /* =====================================================
    ASSETS
 ===================================================== */
@@ -154,31 +168,16 @@ registerAsset(background);
     jumpSound,
     gameOverSound,
     collectSound,
-    obstacleScoreSound,
     bgmSound,
     runSound
 ].forEach(registerAsset);
+registerAsset(scoreTickSound);
 /* =====================================================
-   COIN TYPES (RARITY CONTROLLED)
+   SINGLE COLLECTABLE
 ===================================================== */
-const coinTypes = [
-    { src: "assets/collectable/coin5.png", score: 5, weight: 50 },
-    { src: "assets/collectable/coin10.png", score: 10, weight: 20 },
-    { src: "assets/collectable/coin20.png", score: 20, weight: 15 },
-    { src: "assets/collectable/coin50.png", score: 50, weight: 10 },
-    { src: "assets/collectable/coin100.png", score: 100, weight: 5 }
-];
-coinTypes.forEach(c => { c.image = new Image(); c.image.src = c.src; });
-function getRandomCoinType() {
-    const totalWeight = coinTypes.reduce((sum, c) => sum + c.weight, 0);
-    let random = Math.random() * totalWeight;
-    for (const coin of coinTypes) {
-        if (random < coin.weight) return coin;
-        random -= coin.weight;
-    }
-    return coinTypes[coinTypes.length - 1];
-}
-coinTypes.forEach(c => registerAsset(c.image));
+const collectableImg = new Image();
+collectableImg.src = "assets/collectable/coin.png"; // ONE asset only
+registerAsset(collectableImg);
 
 /* =====================================================
    PLAYER ANIMATION ARRAYS
@@ -266,7 +265,6 @@ const floatingWords = [
     { minSpeed: 1.5, words: ["Amazing", "Fantastic"] },
     { minSpeed: 2.5, words: ["Wonderful", "Unstoppable"] }
 ];
-const scorePerPhase = [1, 5, 10]; // NEW: score for each floating word phase
 let floatingTexts = [];
 let floatingScores = [];
 
@@ -283,7 +281,9 @@ const floatingScorePool = [];
 let obstacles = [];
 let collectables = [];
 let backgroundX = 0;
-let score = 0;
+let distanceScore = 0;
+let coinScore = 0;
+let totalCoinsCollected = 0; // NEW: raw coin count (for combo logic)
 let gameOver = false;
 let animationFrame = 0;
 let animationTimer = 0;
@@ -292,6 +292,15 @@ let lastObstacleIndex = -1;
 let lastTime = performance.now();
 let lastFrameTime = performance.now();
 let frameAccumulator = 0;
+let distanceRun = 0;
+let comboMultiplier = 1;
+let nextComboAt = 10;
+let totalScore = 0;
+let displayDistance = 0;
+let displayCoins = 0;
+let displayTotal = 0;
+let scoreAnimDone = false;
+
 
 /* =====================================================
    REUSED HITBOX OBJECTS (GC OPTIMIZATION)
@@ -313,7 +322,11 @@ function handleInput() {
         runSound.play().catch(()=>{});
         return;
     }
-    if (gameOver) return restartGame();
+    if (gameOver) {
+    if (scoreAnimDone) restartGame();
+    return;
+}
+
 
     if (player.jumpCount < player.maxJumps) {
         player.velocityY = player.jumpCount === 0 ? JUMP_FORCE : SECOND_JUMP_FORCE;
@@ -348,7 +361,7 @@ function spawnObstacle() {
         passed: false
     });
 
-    nextObstacleTimer = Math.floor(Math.random() * 100) + 30;
+    nextObstacleTimer = Math.floor(Math.random() * 20) + 50;
 }
 
 
@@ -359,24 +372,41 @@ function spawnObstacle() {
 let nextCollectableTimer = 120;
 function spawnCollectable() {
     if (collectables.length >= MAX_COLLECTABLES_ON_SCREEN) return;
-    const type = getRandomCoinType();
-    const c = { x: canvas.width + 40, y: GROUND_Y - 30 - Math.random() * 200, width:50, height:50, hitbox:{ offsetX:0, offsetY:0, width:50, height:50 }, type: type };
+
+    const c = {
+        x: canvas.width + 40,
+        y: GROUND_Y + 10 - Math.random() * 80,
+        width: 15,
+        height: 25,
+        image: collectableImg,
+        hitbox: {
+            offsetX: 8,
+            offsetY: 8,
+            width: 24,
+            height: 24
+        }
+    };
+
+    // Prevent overlap with obstacles
     for (const o of obstacles) {
-const h = o.hitbox;
-oHit.x = o.x + h.offsetX;
-oHit.y = o.y + h.offsetY;
-oHit.w = h.width;
-oHit.h = h.height;
-cHit.x = c.x + c.hitbox.offsetX;
-cHit.y = c.y + c.hitbox.offsetY;
-cHit.w = c.hitbox.width;
-cHit.h = c.hitbox.height;
+        const h = o.hitbox;
+        oHit.x = o.x + h.offsetX;
+        oHit.y = o.y + h.offsetY;
+        oHit.w = h.width;
+        oHit.h = h.height;
+
+        cHit.x = c.x + c.hitbox.offsetX;
+        cHit.y = c.y + c.hitbox.offsetY;
+        cHit.w = c.hitbox.width;
+        cHit.h = c.hitbox.height;
 
         if (rectsOverlap(oHit, cHit)) return;
     }
+
     collectables.push(c);
-    nextCollectableTimer = Math.floor(Math.random() * 180) + 120;
+    nextCollectableTimer = Math.floor(Math.random() * 0) + 20;
 }
+
 
 
 /* =====================================================
@@ -396,13 +426,70 @@ function restartGame() {
     player.state = "run";
     runSound.play().catch(()=>{});
     player.isFalling = false;
+    distanceRun = 0;
+    distanceScore = 0;
+    coinScore = 0;
+    comboMultiplier = 1;
+    nextComboAt = 10;
+    totalCoinsCollected = 0;
+    totalScore = 0;
+    displayDistance = 0;
+    displayCoins = 0;
+    displayTotal = 0;
+    scoreAnimDone = false;
+
 }
 
 /* =====================================================
    UPDATE
 ===================================================== */
+let lastTickDistance = 0;
+let lastTickCoins = 0;
+let lastTickTotal = 0;
+
+function animateGameOverScores() {
+    const speed = 0.05; // adjust animation speed
+
+    // Previous values
+    const prevDistance = Math.floor(displayDistance);
+    const prevCoins = Math.floor(displayCoins);
+    const prevTotal = Math.floor(displayTotal);
+
+    // Animate counts
+    displayDistance += Math.max(1, (distanceScore - displayDistance) * speed);
+    displayCoins += Math.max(1, (coinScore - displayCoins) * speed);
+    displayTotal += Math.max(1, (totalScore - displayTotal) * speed);
+
+    displayDistance = Math.min(displayDistance, distanceScore);
+    displayCoins = Math.min(displayCoins, coinScore);
+    displayTotal = Math.min(displayTotal, totalScore);
+
+    // Play tick if the displayed score increased by 1
+    if (Math.floor(displayDistance) > prevDistance || Math.floor(displayCoins) > prevCoins || Math.floor(displayTotal) > prevTotal) {
+        scoreTickSound.currentTime = 0;
+        scoreTickSound.play().catch(()=>{});
+    }
+
+    if (
+        displayDistance === distanceScore &&
+        displayCoins === coinScore &&
+        displayTotal === totalScore
+    ) {
+        scoreAnimDone = true;
+    }
+}
+
+
+
 function update() {
-    if (!gameStarted || gameOver) return;
+    if (!gameStarted) return;
+
+// Allow score animation after game over
+if (gameOver) {
+    animateGameOverScores();
+    return;
+}
+
 
 // PLAYER FALLING INTO HOLE
 if (player.isFalling) {
@@ -415,7 +502,9 @@ if (player.y > canvas.height) {
     gameOver = true;
     runSound.pause();
     gameOverSound.play();
+    totalScore = distanceScore + coinScore;
 }
+
 
 
     return; // IMPORTANT: skip rest of update
@@ -431,6 +520,11 @@ speedMultiplier = Math.min(
 );
 
     const speed = GAME_SPEED * speedMultiplier;
+
+// DISTANCE-BASED SCORING (DISTANCE ONLY)
+distanceRun += speed;
+distanceScore = Math.floor(distanceRun * DISTANCE_SCORE_RATE);
+
 
 backgroundX = Math.floor(backgroundX - speed);
     if (backgroundX <= -canvas.width) backgroundX = 0;
@@ -497,79 +591,81 @@ if (
 if (o.type !== "hole") {
     const h = o.hitbox;
     const oHit = { x:o.x + h.offsetX, y:o.y + h.offsetY, w:h.width, h:h.height };
-    if (rectsOverlap(pHit, oHit)) {
-        gameOverSound.play();
-        gameOver = true;
-        runSound.pause();
-    }
+if (rectsOverlap(pHit, oHit)) {
+    gameOverSound.play();
+    gameOver = true;
+    runSound.pause();
+    totalScore = distanceScore + coinScore;
 }
 
-        if (!o.passed && o.x + o.width < player.x) {
-            o.passed = true;
-
-            // Determine current floating word phase
-            let phaseIndex = 0;
-            let wordsForSpeed = floatingWords[0].words;
-            for (let i = 0; i < floatingWords.length; i++) {
-                if (speedMultiplier >= floatingWords[i].minSpeed) {
-                    wordsForSpeed = floatingWords[i].words;
-                    phaseIndex = i;
-                }
-            }
-
-            // Score based on phase
-            const obstacleScore = scorePerPhase[phaseIndex];
-            score += obstacleScore;
-
-            // Play score sound
-            obstacleScoreSound.currentTime = 0;
-            obstacleScoreSound.play();
-
-            // Show floating score
-const fs = floatingScorePool.pop() || {};
-fs.x = player.x + player.width / 2;
-fs.y = player.y - 50;
-fs.value = "+" + obstacleScore;
-fs.opacity = 1;
-fs.speedY = 1.2 + speedMultiplier * 0.2;
-floatingScores.push(fs);
-
-
-            // Show floating word
-            const randomWord = wordsForSpeed[Math.floor(Math.random() * wordsForSpeed.length)];
-const ft = floatingTextPool.pop() || {};
-ft.x = player.x + player.width / 2;
-ft.y = player.y - 20;
-ft.text = randomWord;
-ft.opacity = 1;
-ft.speedY = 1 + speedMultiplier * 0.5;
-floatingTexts.push(ft);
-
-        }
+}
     });
 
     collectables = collectables.filter(c => {
         const cHit = { x:c.x + c.hitbox.offsetX, y:c.y + c.hitbox.offsetY, w:c.hitbox.width, h:c.hitbox.height };
-        if (rectsOverlap(pHit, cHit)) {
-            score += c.type.score;
-            collectSound.play();
 
-            // Floating score for coin
-const fs = floatingScorePool.pop() || {};
-fs.x = c.x + c.width / 2;
-fs.y = c.y;
-fs.value = "+" + c.type.score;
-fs.opacity = 1;
-fs.speedY = 1.5 + speedMultiplier * 0.3;
-floatingScores.push(fs);
+if (rectsOverlap(pHit, cHit)) {
 
-            return false;
-        }
+    // RAW COIN COUNT (FOR COMBO)
+    totalCoinsCollected++;
+
+    // COMBO-AFFECTED VALUE
+    const coinValue = comboMultiplier;
+    coinScore += coinValue;
+
+    collectSound.play();
+
+
+    // ===============================
+    // COMBO SYSTEM (EVERY 10 CRYSTALS)
+    // ===============================
+if (totalCoinsCollected >= nextComboAt) {
+    comboMultiplier++;
+
+    // Center screen combo text (existing behavior)
+    const ft = floatingTextPool.pop() || {};
+    ft.x = canvas.width / 2;
+    ft.y = canvas.height / 2 - 80;
+    ft.text = "COMBO x" + comboMultiplier;
+    ft.opacity = 1;
+    ft.speedY = 1.2;
+    ft.followPlayer = false;
+    floatingTexts.push(ft);
+
+    // Player floating combo text (NEW)
+    spawnPlayerComboText("COMBO x" + comboMultiplier);
+
+    nextComboAt += 10;
+}
+
+
+
+    const fs = floatingScorePool.pop() || {};
+    fs.x = c.x + c.width / 2;
+    fs.y = c.y;
+    fs.value = "+" + coinValue;
+    fs.opacity = 1;
+    fs.speedY = 1.5 + speedMultiplier * 0.3;
+    floatingScores.push(fs);
+
+    return false;
+}
+        
         return c.x + c.width > 0;
     });
 
     // Update floating texts
-    floatingTexts.forEach(ft => { ft.y -= ft.speedY; ft.opacity -= 0.02; });
+floatingTexts.forEach(ft => {
+    if (ft.followPlayer) {
+        ft.x = player.x + player.width / 2;
+        ft.y -= ft.speedY;
+    } else {
+        ft.y -= ft.speedY;
+    }
+    ft.opacity -= 0.02;
+});
+
+
     floatingTexts = floatingTexts.filter(ft => {
     if (ft.opacity <= 0) {
         floatingTextPool.push(ft);
@@ -599,19 +695,7 @@ floatingScores.push(fs);
 /* =====================================================
    HOLE DRAWING (SPLIT FOR DEPTH)
 ===================================================== */
-function drawHoleBottom(o) {
-     //Dark interior
-    ctx.fillStyle = "#000";
-    ctx.beginPath();
-    ctx.ellipse(
-        o.x + o.width / 2,
-        GROUND_Y + o.height * 1.8,
-        o.width * 0,
-        o.height * 0,
-        0, 0, Math.PI * 2
-    );
-    ctx.fill();
-}
+
 
 function drawHoleTop(o) {
     // Rim
@@ -662,12 +746,6 @@ function draw() {
 // ===============================
 // HOLE BOTTOM (BEHIND PLAYER)
 // ===============================
-obstacles.forEach(o => {
-    if (o.type === "hole") {
-        drawHoleBottom(o);
-    }
-});
-
 
 drawPlayerShadow(player);
 
@@ -726,9 +804,9 @@ obstacles.forEach(o => {
 
         case "table":
             // Table top
-            ctx.fillStyle = "#8B5A2B";
+	    ctx.fillStyle = "#b0b0b0";
             ctx.fillRect(o.x, o.y, o.width, Math.round(o.height * 0.2));
-            ctx.strokeStyle = "#654321";
+            ctx.strokeStyle = "#777";
             ctx.strokeRect(o.x, o.y, o.width, Math.round(o.height * 0.2));
 
             // Table legs
@@ -736,7 +814,7 @@ obstacles.forEach(o => {
             const legHeight = Math.round(o.height * 0.8);
             const legOffsetX = Math.round(o.width * 0.05);
             const legOffsetY = Math.round(o.height * 0.2);
-            ctx.fillStyle = "#7B4F2A";
+            ctx.fillStyle = "#999";
             ctx.fillRect(o.x + legOffsetX, o.y + legOffsetY, legWidth, legHeight);
             ctx.fillRect(o.x + o.width - legOffsetX - legWidth, o.y + legOffsetY, legWidth, legHeight);
             ctx.fillRect(o.x + o.width / 2 - legWidth / 2, o.y + legOffsetY, legWidth, legHeight);
@@ -744,6 +822,7 @@ obstacles.forEach(o => {
             // Optional shading
             ctx.fillStyle = "rgba(0,0,0,0.1)";
             ctx.fillRect(o.x, o.y + Math.round(o.height * 0.2), o.width, 2);
+            break;
 
     case "oven":
         // Oven body
@@ -810,7 +889,8 @@ case "shelf":
 
 
 
-    collectables.forEach(c => safeDraw(c.type.image, c.x, c.y, c.width, c.height));
+    collectables.forEach(c => safeDraw(c.image, c.x, c.y, c.width, c.height));
+
 
     // Draw floating texts
     floatingTexts.forEach(ft => {
@@ -834,13 +914,73 @@ case "shelf":
         ctx.globalAlpha = 1;
     });
 
-    ctx.fillStyle="#fff"; ctx.font="18px Arial"; ctx.textAlign="left"; ctx.fillText("Score: "+score,10,30);
+ctx.fillStyle = "#fff";
+ctx.font = "18px Arial";
+ctx.textAlign = "left";
+ctx.fillText("Distance: " + distanceScore, 10, 30);
 
-    if (gameOver) { 
-        ctx.textAlign="center"; 
-        ctx.fillText("Game Over",canvas.width/2,canvas.height/2); 
-        ctx.fillText("Final Score: "+score,canvas.width/2,canvas.height/2+30); 
-    }
+ctx.textAlign = "center";
+ctx.fillStyle = "#ffd700";
+ctx.font = "16px Arial";
+ctx.fillText("Combo x" + comboMultiplier, canvas.width / 2, 30);
+
+const coinIconSize = 18;
+const padding = 10;
+
+ctx.textAlign = "right";
+ctx.fillText(
+    coinScore,
+    canvas.width - padding - coinIconSize - 4,
+    30
+);
+
+// Draw coin icon
+ctx.drawImage(
+    collectableImg,
+    canvas.width - padding - coinIconSize,
+    14,
+    coinIconSize,
+    coinIconSize
+);
+
+
+if (gameOver) {
+    ctx.textAlign = "center";
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "28px Arial";
+    ctx.fillText("Game Over", canvas.width / 2, canvas.height / 2 - 40);
+
+    ctx.font = "18px Arial";
+ctx.fillText(
+    "Distance: " + Math.floor(displayDistance),
+    canvas.width / 2,
+    canvas.height / 2
+);
+
+ctx.fillText(
+    "Crystals: " + Math.floor(displayCoins),
+    canvas.width / 2,
+    canvas.height / 2 + 25
+);
+
+ctx.fillStyle = "#ffd700";
+ctx.font = "22px Arial";
+ctx.fillText(
+    "TOTAL SCORE: " + Math.floor(displayTotal),
+    canvas.width / 2,
+    canvas.height / 2 + 65
+);
+
+    ctx.font = "14px Arial";
+    ctx.fillStyle = "#aaa";
+    ctx.fillText(
+        "Tap or press Space to restart",
+        canvas.width / 2,
+        canvas.height / 2 + 95
+    );
+}
+
 
     if (DEBUG_HITBOX) {
         drawHitbox(player.x + player.hitbox.offsetX, player.y + player.hitbox.offsetY, player.hitbox.width, player.hitbox.height, "lime");
