@@ -76,6 +76,11 @@ const runSound = new Audio("assets/run_sound.mp3");
 const scoreTickSound = new Audio("assets/tick.mp3");
 scoreTickSound.volume = 0.5; // adjust as needed
 
+/* ===== iOS SAFARI AUDIO FIX (STEP 4) ===== */
+[jumpSound, gameOverSound, collectSound, bgmSound, runSound, scoreTickSound].forEach(a => {
+    a.preload = "none";
+});
+/* ======================================== */
 
 
 bgmSound.loop = true; bgmSound.volume = 0.3;
@@ -164,14 +169,7 @@ function checkAssetsReady() {
     }
 }
 registerAsset(background);
-[
-    jumpSound,
-    gameOverSound,
-    collectSound,
-    bgmSound,
-    runSound
-].forEach(registerAsset);
-registerAsset(scoreTickSound);
+
 /* =====================================================
    SINGLE COLLECTABLE
 ===================================================== */
@@ -316,24 +314,31 @@ const cHit = { x:0, y:0, w:0, h:0 };
 function handleInput() {
     if (!assetsReady) return;
 
+    // FIRST USER INTERACTION — unlock audio
     if (!gameStarted) {
         gameStarted = true;
+
+        // iOS-safe audio init
+        [bgmSound, runSound, jumpSound, collectSound, gameOverSound, scoreTickSound].forEach(a => {
+            a.load();
+        });
+
         bgmSound.play().catch(()=>{});
         runSound.play().catch(()=>{});
         return;
     }
-    if (gameOver) {
-    if (scoreAnimDone) restartGame();
-    return;
-}
 
+    if (gameOver) {
+        if (scoreAnimDone) restartGame();
+        return;
+    }
 
     if (player.jumpCount < player.maxJumps) {
         player.velocityY = player.jumpCount === 0 ? JUMP_FORCE : SECOND_JUMP_FORCE;
         player.state = "jump";
         player.jumpCount++;
         jumpSound.currentTime = 0;
-        jumpSound.play();
+        jumpSound.play().catch(()=>{});
         runSound.pause();
     }
 }
